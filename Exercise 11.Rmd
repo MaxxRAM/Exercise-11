@@ -1,0 +1,146 @@
+---
+title: "Exercise 11"
+author: "Maxximus Ramsaroop"
+date: "2024-03-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(broom)
+library(infer)
+```
+
+Load in dataframe + winnow dataset
+```{r}
+f<- "https://raw.githubusercontent.com/difiore/ada-2024-datasets/main/AVONETdataset1.csv"
+d<- read_csv(f, col_names = T)
+d<- d|> select(Species1, Family1, Order1, Beak.Width, Beak.Depth, Tarsus.Length, Wing.Length, Tail.Length, Mass, Habitat, Migration, Trophic.Level, Trophic.Niche, Min.Latitude, Max.Latitude, Centroid.Latitude, Range.Size, Primary.Lifestyle, Beak.Length_Culmen)
+```
+
+**CHALLENGE 1: One Factor ANOVA & Inference** 
+
+Step 1: Boxplot log(mass) in relation to trophic level + migration
+```{r}
+MassbyTL<- ggplot(data = d |> drop_na(Trophic.Level), aes(x = Trophic.Level, y = log(Mass))) + geom_boxplot()
+MassbyTL
+
+MassbyMig<- ggplot(data = d |> drop_na(Migration), aes(x= as.factor(Migration), y = log(Mass))) + geom_boxplot()
+MassbyMig
+```
+
+Step 2: run lm() of log(mass) + migration & log(mass) + Troph.L
+```{r}
+m1<- lm(log(Mass) ~ Trophic.Level, data = d)
+d<- d |> mutate(Migration = as.factor(Migration))
+m2<- lm(log(Mass) ~ Migration, data = d)
+summary(m1)
+summary(m2)
+# B0 (intercept)  reflects the estimate of the mean log(mass) for the first of our 'level' variables and the estimate for B1 is the estimated difference in mean log(mass) associated with being that level relative to the first (reference) level
+```
+2.1 Releveling
+```{r}
+releveledd<- d|> mutate(Migration = relevel(Migration, ref = "3"))
+rlm2<- lm(log(Mass) ~ Migration, data = releveledd)
+summary(rlm2)
+```
+
+Step 3: Post-Hoc Tukey Honest Significant Differences
+```{r}
+m2aov<- aov(log(Mass) ~ Migration, data = d)
+
+posthoc<- TukeyHSD(m2aov, which= "Migration", conf.level = 0.95)
+posthoc
+```
+
+Step 4: Use permutation to generate null dist. of F statistic 
+```{r}
+original.F<- aov(log(Mass) ~ Trophic.Level, data = d) |> tidy() |> filter(term == "Trophic.Level")
+original.F
+
+d<- d|> mutate(logMass = log(Mass))
+
+permuted.F<- d|> 
+  specify(logMass ~ Trophic.Level) |> # tells workflow the response and predictor variables (predictor = trophic level, response = logmass)
+  hypothesise(null = "independence") |> # tells workflow the null hypothesis
+  generate(reps = 1000, type = "permute") |> #generate a ton of permutations of the logmass from the dataset where trophic level is shuffled randomly
+  calculate(stat = "F") # calculate f statistic for each permutation
+permuted.F
+```
+
+**CHALLENGE 2: Data Wrangling, One & Two-Factor ANOVA**
+
+Step 1: Create Relative Beak Length & Relative Tarsus Length
+```{r}
+# Create variable for relative beak length
+d<- d |> mutate(Relative.Beak.Length = resid(lm(log(Beak.Length_Culmen) ~ log(Mass))))
+# Create variable for relative tarsus length
+d<- d |> mutate(Relative.Tarsus.Length = resid(lm(log(Tarsus.Length) ~ log(Mass))))
+```
+
+Step 2: Make Boxplots!
+```{r}
+# make boxplot of relative tarsus length by primary lifestyle
+ggplot(data = d |> filter(!is.na(Primary.Lifestyle)), aes(Primary.Lifestyle, Relative.Tarsus.Length)) + 
+  geom_boxplot(color = "cyan")
+# make boxplot of relative beak length by trophic niche
+ggplot(data = d |> filter(!is.na(Trophic.Niche)), aes(Trophic.Niche, Relative.Beak.Length)) + geom_boxplot(color = "pink")
+```
+
+Step 3: Run ANOVA for association between Range Size & Migration
+```{r}
+m<- aov(log(Range.Size) ~ as.factor(Migration), data = d|> filter(!is.na(Migration)))
+summary(m)
+```
+3.1 Tukey HSD + Releveling
+```{r}
+TukeyHSD(m)
+Rd<- d|> mutate(Migration = relevel(Migration, ref = "3"))
+Rm<- lm(Range.Size ~ Migration, data = d)
+summary(Rm)
+```
+
+Step 4: Winnow to Passeriformes
+```{r}
+p<- d|> filter(Order1 == "Passeriformes")
+```
+4.1 Run one-factor ANOVA on RBL ~ PL & RBL ~ TL + Boxplots
+```{r}
+ggplot(d|> filter(!is.na(Primary.Lifestyle)), aes(x = Primary.Lifestyle, y = Relative.Beak.Length)) + geom_boxplot()
+ggplot(d|> filter(!is.na(Trophic.Level)), aes(x = Trophic.Level, y = Relative.Beak.Length)) + geom_boxplot()
+anova1<- aov(d$Relative.Beak.Length ~ d$Primary.Lifestyle)
+anova2<- aov(d$Relative.Beak.Length ~ d$Trophic.Level)
+summary(anova1)
+summary(anova2)
+
+lm1<- lm(d$Relative.Beak.Length ~ d$Primary.Lifestyle)
+lm2<- lm(d$Relative.Beak.Length ~ d$Trophic.Level)
+summary(lm1)
+summary(lm2)
+```
+
+Step 5: Run Two-Factor ANOVA of RLB ~ PL + TL
+```{r}
+m<- aov(Relative.Beak.Length ~ Trophic.Level + Primary.Lifestyle, data = d)
+m
+```
+
+Step 6: Two-Factor With Possibility of Interaction
+```{r}
+m<- aov(Relative.Beak.Length ~ Trophic.Level + Primary.Lifestyle + Trophic.Level:Primary.Lifestyle, data = d)
+m
+```
+
+Step 7: Use interaction.plot to visualize relationship
+```{r}
+interaction.plot(
+  x.factor = d$Trophic.Level, 
+  xlab = "Trophic Level",
+  trace.factor = d$Primary.Lifestyle, 
+  trace.label = "Primary.Lifestyle", 
+  response = d$Relative.Beak.Length, 
+  ylab = "Mean relative Beak Length"
+)
+```
+
